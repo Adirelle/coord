@@ -14,12 +14,32 @@ const (
 	FAILED
 )
 
-func (s Status) String() string {
-	txt, err := s.MarshalText()
-	if err != nil {
-		return err.Error()
+func (s Status) Includes(wanted Status) bool {
+	switch wanted {
+	case STARTED:
+		return STARTED <= s && s <= FAILED
+	case SUCCEEDED:
+		return s == SUCCEEDED
+	case FAILED:
+		return s == FAILED
+	default:
+		return false
 	}
-	return string(txt)
+}
+
+func (s Status) String() string {
+	switch s {
+	case UNDEFINED:
+		return "undefined"
+	case STARTED:
+		return "started"
+	case SUCCEEDED:
+		return "succeeded"
+	case FAILED:
+		return "failed"
+	default:
+		return fmt.Sprintf("unknown-status-%d", s)
+	}
 }
 
 func (s Status) MarshalText() ([]byte, error) {
@@ -39,6 +59,8 @@ func (s Status) MarshalText() ([]byte, error) {
 
 func (s *Status) UnmarshalText(text []byte) error {
 	switch strings.TrimSpace(strings.ToLower(string(text))) {
+	case "undefined":
+		*s = UNDEFINED
 	case "started":
 		*s = STARTED
 	case "succeeded":
