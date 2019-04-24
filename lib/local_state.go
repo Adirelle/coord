@@ -10,7 +10,7 @@ import (
 type LocalState struct {
 	root *iradix.Tree
 	ctl  chan interface{}
-	nc   chan interface{}
+	nc   chan struct{}
 	l    *log.Logger
 }
 
@@ -24,7 +24,7 @@ func NewLocalState(l *log.Logger) (s *LocalState) {
 	s = &LocalState{
 		iradix.New(),
 		make(chan interface{}, 10),
-		make(chan interface{}),
+		make(chan struct{}),
 		l,
 	}
 	go s.loop()
@@ -34,7 +34,7 @@ func NewLocalState(l *log.Logger) (s *LocalState) {
 func (s *LocalState) notify() {
 	s.l.Println("notifying change")
 	close(s.nc)
-	s.nc = make(chan interface{})
+	s.nc = make(chan struct{})
 }
 
 func (s *LocalState) loop() {
@@ -77,15 +77,11 @@ func (s *LocalState) Get(path string) Status {
 func (s *LocalState) Wait(path string, expected Status, timeout time.Duration) bool {
 	t := time.After(timeout)
 	for s.Get(path) != expected {
-		s.l.Println("not the expected status, waiting for change")
 		select {
 		case <-s.nc:
-			s.l.Println("data changed")
 		case <-t:
-			s.l.Println("timeout")
 			return false
 		}
 	}
-	s.l.Println("expected status !")
 	return true
 }
