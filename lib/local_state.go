@@ -2,7 +2,6 @@ package lib
 
 import (
 	"log"
-	"time"
 
 	iradix "github.com/hashicorp/go-immutable-radix"
 )
@@ -74,12 +73,11 @@ func (s *LocalState) Get(path string) Status {
 	return UNDEFINED
 }
 
-func (s *LocalState) Wait(path string, expected Status, timeout time.Duration) bool {
-	t := time.After(timeout)
-	for s.Get(path) != expected {
+func (s *LocalState) Wait(path string, expected Status, timeout <-chan struct{}) bool {
+	for !s.Get(path).Includes(expected) {
 		select {
 		case <-s.nc:
-		case <-t:
+		case <-timeout:
 			return false
 		}
 	}

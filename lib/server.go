@@ -2,14 +2,13 @@ package lib
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type StateReader interface {
 	Get(string) Status
-	Wait(string, Status, time.Duration) bool
+	Wait(string, Status, <-chan struct{}) bool
 }
 
 type StateWriter interface {
@@ -32,7 +31,7 @@ func MakeServer(state interface{}, g *gin.RouterGroup) {
 					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 					return
 				}
-				if !reader.Wait(path, expected, 5*time.Minute) {
+				if !reader.Wait(path, expected, c.Done()) {
 					c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
 					return
 				}
