@@ -1,6 +1,7 @@
-package main
+package lib
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -23,6 +24,8 @@ func (s Status) String() string {
 
 func (s Status) MarshalText() ([]byte, error) {
 	switch s {
+	case UNDEFINED:
+		return []byte("undefined"), nil
 	case STARTED:
 		return []byte("started"), nil
 	case SUCCEEDED:
@@ -30,7 +33,7 @@ func (s Status) MarshalText() ([]byte, error) {
 	case FAILED:
 		return []byte("failed"), nil
 	default:
-		return []byte("undefined"), nil
+		return nil, fmt.Errorf("unknown status #%d", s)
 	}
 }
 
@@ -43,7 +46,7 @@ func (s *Status) UnmarshalText(text []byte) error {
 	case "failed":
 		*s = FAILED
 	default:
-		*s = UNDEFINED
+		return fmt.Errorf("unknown status: %s", text)
 	}
 	return nil
 }

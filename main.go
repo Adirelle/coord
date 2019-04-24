@@ -1,7 +1,9 @@
 package main
 
+import (
+	"github.com/Adirelle/coord/cmd"
+)
+
 func main() {
-	state := NewLocalState()
-	router := MakeServer(state)
-	router.Run()
+	cmd.Execute()
 }

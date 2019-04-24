@@ -1,7 +1,6 @@
-package main
+package lib
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
@@ -14,21 +13,31 @@ type StateReader interface {
 }
 
 type StateWriter interface {
-	Put(string, Status) <-chan bool
-	Remove(string) <-chan bool
+	Put(string, Status)
+	Remove(string)
 }
 
 type StatusMsg struct {
 	Status Status `json:"status"`
 }
 
-func MakeServer(state interface{}) *gin.Engine {
-	g := gin.Default()
-
+func MakeServer(state interface{}, g *gin.RouterGroup) {
 	if reader, ok := state.(StateReader); ok {
 		g.GET("/*path", func(c *gin.Context) {
 			path := c.Param("path")
-			fmt.Printf("path=%#v\n", path)
+
+			if wait := c.Query("wait"); wait != "" {
+				var expected Status
+				if err := expected.UnmarshalText([]byte(wait)); err != nil {
+					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				if !reader.Wait(path, expected, 5*time.Minute) {
+					c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
+					return
+				}
+			}
+
 			if status := reader.Get(path); status == UNDEFINED {
 				c.Status(http.StatusNotFound)
 			} else {
@@ -42,13 +51,17 @@ func MakeServer(state interface{}) *gin.Engine {
 			path := c.Param("path")
 			var msg StatusMsg
 			if err := c.ShouldBindJSON(&msg); err != nil {
-				c.AbortWithError(http.StatusBadRequest, err)
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
 			}
-			fmt.Printf("path=%#v, msg=%#v\n", path, msg)
 			writer.Put(path, msg.Status)
 			c.Status(http.StatusNoContent)
 		})
-	}
 
-	return g
+		g.DELETE("/*path", func(c *gin.Context) {
+			path := c.Param("path")
+			writer.Remove(path)
+			c.Status(http.StatusNoContent)
+		})
+	}
 }
