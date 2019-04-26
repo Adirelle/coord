@@ -1,9 +1,8 @@
 package lib
 
 import (
-	"log"
-
 	iradix "github.com/hashicorp/go-immutable-radix"
+	"log"
 )
 
 type LocalState struct {
@@ -58,6 +57,10 @@ func (s *LocalState) loop() {
 	}
 }
 
+func (s *LocalState) Stop() {
+	close(s.ctl)
+}
+
 func (s *LocalState) Put(path string, status Status) {
 	s.ctl <- putCommand{path, status}
 }
@@ -74,10 +77,18 @@ func (s *LocalState) Get(path string) Status {
 }
 
 func (s *LocalState) Wait(path string, expected Status, timeout <-chan struct{}) bool {
-	for !s.Get(path).Includes(expected) {
+	cond := func() bool {
+		actual := s.Get(path)
+		s.l.Printf("Expected=%s, actual=%s\n", expected, actual)
+		return actual.Includes(expected)
+	}
+	for !cond() {
+		s.l.Println("Waiting for change")
 		select {
 		case <-s.nc:
+			s.l.Println("Been notified of a change")
 		case <-timeout:
+			s.l.Println("Timeout")
 			return false
 		}
 	}
