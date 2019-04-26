@@ -16,51 +16,69 @@ type StateWriter interface {
 	Remove(string)
 }
 
+func MakeServer(state interface{}, g *gin.RouterGroup) {
+	if reader, ok := state.(StateReader); ok {
+		rs := ReadServer{reader}
+		g.GET("/*path", rs.GET)
+	}
+
+	if writer, ok := state.(StateWriter); ok {
+		rw := WriteServer{writer}
+		g.PUT("/*path", rw.PUT)
+		g.DELETE("/*path", rw.DELETE)
+	}
+}
+
 type StatusMsg struct {
 	Status Status `json:"status"`
 }
 
-func MakeServer(state interface{}, g *gin.RouterGroup) {
-	if reader, ok := state.(StateReader); ok {
-		g.GET("/*path", func(c *gin.Context) {
-			path := c.Param("path")
+type ReadServer struct {
+	state StateReader
+}
 
-			if wait := c.Query("wait"); wait != "" {
-				var expected Status
-				if err := expected.UnmarshalText([]byte(wait)); err != nil {
-					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-					return
-				}
-				if !reader.Wait(path, expected, c.Done()) {
-					c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
-					return
-				}
-			}
+func (s ReadServer) GET(c *gin.Context) {
+	path := c.Param("path")
 
-			if status := reader.Get(path); status == UNDEFINED {
-				c.Status(http.StatusNotFound)
-			} else {
-				c.JSON(http.StatusOK, StatusMsg{status})
-			}
-		})
-	}
+	if waitParam := c.Query("wait"); waitParam != "" {
+		wait := UNDEFINED
+		if err := wait.UnmarshalText([]byte(waitParam)); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
-	if writer, ok := state.(StateWriter); ok {
-		g.PUT("/*path", func(c *gin.Context) {
-			path := c.Param("path")
-			var msg StatusMsg
-			if err := c.ShouldBindJSON(&msg); err != nil {
-				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if wait != UNDEFINED {
+			if !s.state.Wait(path, wait, c.Done()) {
+				c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
 				return
 			}
-			writer.Put(path, msg.Status)
-			c.Status(http.StatusNoContent)
-		})
-
-		g.DELETE("/*path", func(c *gin.Context) {
-			path := c.Param("path")
-			writer.Remove(path)
-			c.Status(http.StatusNoContent)
-		})
+		}
 	}
+
+	if status := s.state.Get(path); status == UNDEFINED {
+		c.Status(http.StatusNotFound)
+	} else {
+		c.JSON(http.StatusOK, StatusMsg{status})
+	}
+}
+
+type WriteServer struct {
+	state StateWriter
+}
+
+func (s WriteServer) PUT(c *gin.Context) {
+	path := c.Param("path")
+	var msg StatusMsg
+	if err := c.ShouldBindJSON(&msg); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	s.state.Put(path, msg.Status)
+	c.Status(http.StatusNoContent)
+}
+
+func (s WriteServer) DELETE(c *gin.Context) {
+	path := c.Param("path")
+	s.state.Remove(path)
+	c.Status(http.StatusNoContent)
 }
