@@ -1,22 +1,32 @@
 package lib
 
 import (
-	iradix "github.com/hashicorp/go-immutable-radix"
 	"log"
+
+	iradix "github.com/hashicorp/go-immutable-radix"
 )
 
 type LocalState struct {
-	root *iradix.Tree
-	ctl  chan interface{}
-	nc   chan struct{}
-	l    *log.Logger
+	root    *iradix.Tree
+	ctl     chan interface{}
+	changed chan struct{}
+	l       *log.Logger
 }
 
 type putCommand struct {
 	path   string
 	status Status
+	done   chan struct{}
 }
-type delCommand struct{ path string }
+
+type delCommand struct {
+	path string
+	done chan struct{}
+}
+
+type stopCommand struct {
+	done chan struct{}
+}
 
 func NewLocalState(l *log.Logger) (s *LocalState) {
 	s = &LocalState{
@@ -30,9 +40,8 @@ func NewLocalState(l *log.Logger) (s *LocalState) {
 }
 
 func (s *LocalState) notify() {
-	s.l.Println("notifying change")
-	close(s.nc)
-	s.nc = make(chan struct{})
+	close(s.changed)
+	s.changed = make(chan struct{})
 }
 
 func (s *LocalState) loop() {
@@ -45,12 +54,17 @@ func (s *LocalState) loop() {
 			if prev == nil || prev.(Status) != cmd.status {
 				s.notify()
 			}
+			close(cmd.done)
 		case delCommand:
 			var prev interface{}
 			s.root, prev, _ = s.root.Delete([]byte(cmd.path))
 			if prev != nil {
 				s.notify()
 			}
+			close(cmd.done)
+		case stopCommand:
+			close(s.ctl)
+			close(cmd.done)
 		default:
 			s.l.Printf("unknown LocalState command: %#v", input)
 		}
@@ -58,15 +72,21 @@ func (s *LocalState) loop() {
 }
 
 func (s *LocalState) Stop() {
-	close(s.ctl)
+	done := make(chan struct{})
+	s.ctl <- stopCommand{done}
+	<-done
 }
 
 func (s *LocalState) Put(path string, status Status) {
-	s.ctl <- putCommand{path, status}
+	done := make(chan struct{})
+	s.ctl <- putCommand{path, status, done}
+	<-done
 }
 
 func (s *LocalState) Remove(path string) {
-	s.ctl <- delCommand{path}
+	done := make(chan struct{})
+	s.ctl <- delCommand{path, done}
+	<-done
 }
 
 func (s *LocalState) Get(path string) Status {
@@ -76,21 +96,18 @@ func (s *LocalState) Get(path string) Status {
 	return UNDEFINED
 }
 
-func (s *LocalState) Wait(path string, expected Status, timeout <-chan struct{}) bool {
-	cond := func() bool {
+func (s *LocalState) Wait(path string, predicate StatusPredicate, timeout <-chan struct{}) (ok bool) {
+	shouldWait := func() bool {
 		actual := s.Get(path)
-		s.l.Printf("Expected=%s, actual=%s\n", expected, actual)
-		return actual.Includes(expected)
+		ok = predicate.IsFulfilled(actual)
+		return !ok && predicate.IsPossible(actual)
 	}
-	for !cond() {
-		s.l.Println("Waiting for change")
+	for shouldWait() {
 		select {
-		case <-s.nc:
-			s.l.Println("Been notified of a change")
+		case <-s.changed:
 		case <-timeout:
-			s.l.Println("Timeout")
 			return false
 		}
 	}
-	return true
+	return
 }

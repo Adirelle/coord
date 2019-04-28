@@ -8,11 +8,11 @@ import (
 
 type StateReader interface {
 	Get(string) Status
-	Wait(string, Status, <-chan struct{}) bool
+	Wait(string, StatusPredicate, <-chan struct{}) bool
 }
 
 type StateWriter interface {
-	Put(string, Status)
+	Update(string, StatusUpdate)
 	Remove(string)
 }
 
@@ -24,13 +24,17 @@ func MakeServer(state interface{}, g *gin.RouterGroup) {
 
 	if writer, ok := state.(StateWriter); ok {
 		rw := WriteServer{writer}
-		g.PUT("/*path", rw.PUT)
+		g.POST("/*path", rw.POST)
 		g.DELETE("/*path", rw.DELETE)
 	}
 }
 
-type StatusMsg struct {
+type StatusResponse struct {
 	Status Status `json:"status"`
+}
+
+type WaitRequest struct {
+	StatusPredicate `json:"wait"`
 }
 
 type ReadServer struct {
@@ -40,25 +44,21 @@ type ReadServer struct {
 func (s ReadServer) GET(c *gin.Context) {
 	path := c.Param("path")
 
-	if waitParam := c.Query("wait"); waitParam != "" {
-		wait := UNDEFINED
-		if err := wait.UnmarshalText([]byte(waitParam)); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+	var req WaitRequest
+	if err := c.ShouldBind(req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-		if wait != UNDEFINED {
-			if !s.state.Wait(path, wait, c.Done()) {
-				c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
-				return
-			}
-		}
+	if !s.state.Wait(path, req, c.Done()) {
+		c.AbortWithStatusJSON(http.StatusRequestTimeout, gin.H{"error": "time out"})
+		return
 	}
 
 	if status := s.state.Get(path); status == UNDEFINED {
 		c.Status(http.StatusNotFound)
 	} else {
-		c.JSON(http.StatusOK, StatusMsg{status})
+		c.JSON(http.StatusOK, StatusResponse{status})
 	}
 }
 
@@ -66,14 +66,20 @@ type WriteServer struct {
 	state StateWriter
 }
 
-func (s WriteServer) PUT(c *gin.Context) {
+type UpdateRequest struct {
+	StatusUpdate `json:"action"`
+}
+
+func (s WriteServer) POST(c *gin.Context) {
 	path := c.Param("path")
-	var msg StatusMsg
-	if err := c.ShouldBindJSON(&msg); err != nil {
+
+	var req UpdateRequest
+	if err := c.Bind(req); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	s.state.Put(path, msg.Status)
+
+	s.state.Update(path, req)
 	c.Status(http.StatusNoContent)
 }
 
