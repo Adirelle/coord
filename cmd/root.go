@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 
@@ -14,7 +15,9 @@ var rootCmd = &cobra.Command{
 	Short: "Coord is ...",
 	Long:  "HTTP-based processus coordination.",
 	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Root().Help()
+		if err := cmd.Root().Help(); err != nil {
+			log.Fatal(err.Error())
+		}
 	},
 }
 
@@ -26,7 +29,9 @@ func init() {
 
 	serverURL.URL, _ = url.Parse("http://localhost:7500")
 	rootCmd.PersistentFlags().VarP(&serverURL, "server", "s", "URL of coord server")
-	viper.BindPFlag("server", rootCmd.Flags().Lookup("server"))
+	if err := viper.BindPFlag("server", rootCmd.Flags().Lookup("server")); err != nil {
+		log.Fatal(err.Error())
+	}
 }
 
 func Execute() {
