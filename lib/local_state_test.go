@@ -1,46 +1,81 @@
 package lib
 
 import (
+	"errors"
 	"log"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestLocalState_Get(t *testing.T) {
-	l := log.New(os.Stdout, "TestLocalState_Get: ", 0)
+func setupState(t *testing.T) (*LocalState, func()) {
+	l := log.New(os.Stdout, t.Name()+": ", 0)
 	state := NewLocalState(l)
-	defer state.Stop()
-
-	if res := state.Get("/undefined"); res != UNDEFINED {
-		t.Fatalf("Get on unset path should return UNDEFINED, not %#v", res)
-	}
+	return state, state.Stop
 }
 
-func TestLocalState_Put(t *testing.T) {
-	l := log.New(os.Stdout, "TestLocalState_Put: ", 0)
-	state := NewLocalState(l)
-	defer func() { state.Stop() }()
+func TestLocalState_Get(t *testing.T) {
+	state, stop := setupState(t)
+	defer stop()
 
-	state.Put("/started", STARTED)
+	assert.Equal(t, UNDEFINED, state.Get("/undefined"), "Get on unset path should return UNDEFINED")
+}
 
-	if res := state.Get("/undefined"); res != UNDEFINED {
-		t.Fatalf("Get on unset path should return UNDEFINED, not %#v", res)
+func setter(s Status) StatusUpdateFunc {
+	return StatusUpdateFunc(func(_ Status) (Status, error) {
+		return s, nil
+	})
+}
+
+func TestLocalState_Update(t *testing.T) {
+	state, stop := setupState(t)
+	defer stop()
+
+	if !assert.Nil(t, state.Update("/started", setter(STARTED)), "unexpected error") {
+		t.FailNow()
 	}
 
-	if res := state.Get("/started"); res != STARTED {
-		t.Fatalf("Get on '/started' should return STARTED, not %#v", res)
+	assert.Equal(t, STARTED, state.Get("/started"), "Get on '/started' should return STARTED")
+}
+
+func TestLocalState_Update_Failure(t *testing.T) {
+	state, stop := setupState(t)
+	defer stop()
+
+	if assert.Error(
+		t,
+		state.Update("/started", StatusUpdateFunc(func(s Status) (Status, error) {
+			return FAILED, errors.New("error")
+		})),
+	) {
+		assert.Equal(t, UNDEFINED, state.Get("/started"), "Update should not change tree state on error")
 	}
+
+}
+
+func TestLocalState_Update_Panic(t *testing.T) {
+	state, stop := setupState(t)
+	defer stop()
+
+	assert.Error(
+		t,
+		state.Update("/started", StatusUpdateFunc(func(s Status) (Status, error) {
+			panic("bla")
+		})),
+		"panic should be caught and converted to error"
+	)
 }
 
 func TestLocalState_Remove(t *testing.T) {
-	l := log.New(os.Stdout, "TestLocalState_Remove: ", 0)
-	state := NewLocalState(l)
-	defer state.Stop()
+	state, stop := setupState(t)
+	defer stop()
 
-	state.Put("/started", STARTED)
-
+	if err := state.Update("/started", setter(STARTED)); err != nil {
+		t.Error("unexpected error", err)
+	}
 	if res := state.Get("/started"); res != STARTED {
 		t.Fatalf("Get on '/started' should return STARTED, not %#v", res)
 	}
@@ -53,12 +88,15 @@ func TestLocalState_Remove(t *testing.T) {
 }
 
 func TestLocalState_Wait(t *testing.T) {
-	l := log.New(os.Stdout, "TestLocalState_Wait: ", 0)
-	state := NewLocalState(l)
-	defer state.Stop()
+	state, stop := setupState(t)
+	defer stop()
 
-	state.Put("/started", STARTED)
-	state.Put("/failed", FAILED)
+	if err := state.Update("/started", setter(STARTED)); err != nil {
+		t.Error("unexpected error", err)
+	}
+	if err := state.Update("/failed", setter(FAILED)); err != nil {
+		t.Error("unexpected error", err)
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(5)
@@ -105,7 +143,9 @@ func TestLocalState_Wait(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		time.Sleep(50 * time.Millisecond)
-		state.Put("/deferred/start", STARTED)
+		if err := state.Update("/deferred/start", setter(STARTED)); err != nil {
+			t.Error("unexpected error", err)
+		}
 	}()
 
 	wg.Wait()

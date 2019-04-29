@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"errors"
+	"fmt"
 	"log"
 
 	iradix "github.com/hashicorp/go-immutable-radix"
@@ -13,10 +15,10 @@ type LocalState struct {
 	l       *log.Logger
 }
 
-type putCommand struct {
+type updateCommand struct {
 	path   string
-	status Status
-	done   chan struct{}
+	update StatusUpdate
+	done   chan error
 }
 
 type delCommand struct {
@@ -48,13 +50,11 @@ func (s *LocalState) loop() {
 	for input := range s.ctl {
 		s.l.Printf("processing %#v", input)
 		switch cmd := input.(type) {
-		case putCommand:
-			var prev interface{}
-			s.root, prev, _ = s.root.Insert([]byte(cmd.path), cmd.status)
-			if prev == nil || prev.(Status) != cmd.status {
-				s.notify()
-			}
-			close(cmd.done)
+		case updateCommand:
+			err := s.update([]byte(cmd.path), cmd.update)
+			go func() {
+				cmd.done <- err
+			}()
 		case delCommand:
 			var prev interface{}
 			s.root, prev, _ = s.root.Delete([]byte(cmd.path))
@@ -71,16 +71,59 @@ func (s *LocalState) loop() {
 	}
 }
 
+func errorify(data interface{}) error {
+	if data == nil {
+		return nil
+	}
+	switch value := data.(type) {
+	case error:
+		return value
+	case fmt.Stringer:
+		return errors.New(value.String())
+	case string:
+		return errors.New(value)
+	default:
+		return fmt.Errorf("%#v", value)
+	}
+}
+
+func safeCall(f func() error) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = errorify(rec)
+		}
+	}()
+	err = f()
+	return
+}
+
+func (s *LocalState) update(path []byte, update StatusUpdate) (err error) {
+	status := UNDEFINED
+	if data, found := s.root.Get(path); found {
+		status = data.(Status)
+	}
+	var newStatus Status
+	err = safeCall(func() (err error) {
+		newStatus, err = update.Execute(status)
+		return
+	})
+	if err == nil && status != newStatus {
+		s.root, _, _ = s.root.Insert(path, newStatus)
+		s.notify()
+	}
+	return
+}
+
 func (s *LocalState) Stop() {
 	done := make(chan struct{})
 	s.ctl <- stopCommand{done}
 	<-done
 }
 
-func (s *LocalState) Put(path string, status Status) {
-	done := make(chan struct{})
-	s.ctl <- putCommand{path, status, done}
-	<-done
+func (s *LocalState) Update(path string, update StatusUpdate) error {
+	done := make(chan error)
+	s.ctl <- updateCommand{path, update, done}
+	return <-done
 }
 
 func (s *LocalState) Remove(path string) {
