@@ -3,6 +3,8 @@ package lib
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var statuses = []Status{UNDEFINED, STARTED, SUCCEEDED, FAILED}
@@ -11,14 +13,12 @@ func TestPredefinedStatusUpdate_UnmarshalText(t *testing.T) {
 	var u PredefinedStatusUpdate
 
 	for n := range predefinedStatusUpdates {
-		if err := u.UnmarshalText([]byte(n)); err != nil {
-			t.Error("unexpected error:", err)
-		}
+		t.Run(n, func(t *testing.T) {
+			assert.Nil(t, u.UnmarshalText([]byte(n)), "unexpected error")
+		})
 	}
 
-	if err := u.UnmarshalText([]byte("bla")); err == nil {
-		t.Error("expected error")
-	}
+	assert.Error(t, u.UnmarshalText([]byte("foo")))
 }
 
 func ExampleStatusUpdate_Execute() {
@@ -45,14 +45,12 @@ func TestPredefinedStatusPredicate_UnmarshalText(t *testing.T) {
 	var p PredefinedStatusPredicate
 
 	for n := range predefinedStatusPredicates {
-		if err := p.UnmarshalText([]byte(n)); err != nil {
-			t.Error("unexpected error:", err)
-		}
+		t.Run(n, func(t *testing.T) {
+			assert.Nil(t, p.UnmarshalText([]byte(n)), "unexpected error:")
+		})
 	}
 
-	if err := p.UnmarshalText([]byte("bla")); err == nil {
-		t.Error("expected error")
-	}
+	assert.Error(t, p.UnmarshalText([]byte("bla")))
 }
 
 func ExampleStatusPredicate() {
